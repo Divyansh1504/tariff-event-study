@@ -6,6 +6,26 @@ import statsmodels.api as sm
 from scipy import stats
 
 
+def minimum_detectable_effect(standard_error, alpha=0.05, power=0.80):
+    """Minimum detectable effect (MDE) for a two-sided test with the given standard error.
+
+    This is descriptive of a design's power -- given how noisy an estimator already is, how
+    large would a true effect need to be for a test at this significance level and power to
+    reliably distinguish it from zero? It is not itself a hypothesis test: it takes a
+    standard error already produced by a real fit (or derived algebraically from one via
+    SE = estimate / t-stat) and asks what effect size that SE could resolve.
+    """
+    z_alpha = stats.norm.ppf(1 - alpha / 2)
+    z_power = stats.norm.ppf(power)
+    return (z_alpha + z_power) * standard_error
+
+
+def car_mde(sigma, n, alpha=0.05, power=0.80):
+    """MDE for a CAR test: the standard error of a CAR (sum of N i.i.d. abnormal returns with
+    per-period std `sigma`) is `sigma * sqrt(N)` -- see `test_car_significance`."""
+    return minimum_detectable_effect(sigma * np.sqrt(n), alpha=alpha, power=power)
+
+
 def test_car_significance(ar_series, n_boot=1000, seed=42):
     """Parametric + bootstrap significance test for a cumulative abnormal return (CAR).
 

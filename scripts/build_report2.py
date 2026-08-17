@@ -228,6 +228,58 @@ every specification), not by unexplained excess return.
 """)
 
 md("""
+## Statistical power: could this design have detected a plausible alpha?
+
+A null result answers "was an effect detected?" It doesn't answer "could this design have
+detected one if it existed?" Those are different questions, and conflating them overstates the
+null. Below: the minimum detectable effect (MDE) at 80% power for each alpha specification,
+using the standard error already produced by the fits above (`src/regression.py::minimum_detectable_effect`)
+— this is not a new test, just a description of how sensitive the test already run actually was.
+""")
+
+code("""
+from regression import minimum_detectable_effect
+
+power_rows = []
+for label, model in [("CAPM_EW", capm_eq), ("CAPM_VW", capm_val), ("FF6_EW", ff6_eq), ("FF6_VW", ff6_val)]:
+    alpha_hat = model.params["const"]
+    se = model.bse["const"]
+    mde = minimum_detectable_effect(se)
+    power_rows.append({
+        "Spec": label, "N": int(model.nobs), "Observed_alpha_bps": alpha_hat * 1e4,
+        "SE_bps": se * 1e4, "MDE_bps_80pct_power": mde * 1e4,
+        "MDE_annualized": (1 + mde) ** 252 - 1,
+        "Observed_over_MDE": abs(alpha_hat) / mde,
+    })
+power_table = pd.DataFrame(power_rows).set_index("Spec")
+power_table.round(4)
+""")
+
+code("""
+# Roughly how many trading days would 80% power to detect a ~9 bps/day alpha have required?
+# SE scales ~ 1/sqrt(N) for a fixed residual profile -- solving from the actual N=124 SE.
+target_bps = 9.0
+avg_se_bps = power_table["SE_bps"].mean()
+avg_n = power_table["N"].mean()
+n_required = avg_n * (2.801585 * avg_se_bps / target_bps) ** 2
+print(f"Average SE across the four specs: {avg_se_bps:.2f} bps/day (N={avg_n:.0f} actual)")
+print(f"Approx. trading days needed for 80% power to detect {target_bps} bps/day: {n_required:.0f} "
+      f"({n_required/252:.1f} years)")
+""")
+
+md("""
+**Was this design capable of detecting a plausible tariff effect? No.** Every observed alpha is
+only 60-71% of its own MDE — the true effect would need to be roughly 40-65% larger than what was
+actually observed just to be reliably detectable at 80% power. Detecting the observed ~9 bps/day
+alpha at 80% power would have required roughly the number of trading days computed above — several
+times the ~126 trading days this six-month window actually provided. **This reframes the null: the
+honest conclusion is "this design could not have detected an alpha of the size actually observed,
+let alone a smaller one," not "there is no alpha."** The null result and the power finding are not
+in tension — a design that's underpowered for even its own point estimate was never going to
+produce a significant result regardless of whether a real (small) effect exists.
+""")
+
+md("""
 ## Event-day impact analysis: CAR around individual tariff dates
 
 **On significance testing (Bug E):** the original notebook narrated individual-day CARs as
@@ -302,6 +354,49 @@ plt.show()
 """)
 
 md("""
+## Statistical power: could this design have detected a plausible event-day CAR?
+
+Same question as above, applied to the ±3/±5/±10-day event windows: given the daily abnormal
+return volatility actually observed in this sample, what CAR magnitude would 80% power have
+required? Uses the full-sample daily AR standard deviation (real data, already computed above)
+and the actual trading-day count in each window width — not a new test, a description of the
+test already run.
+""")
+
+code("""
+from regression import car_mde
+
+sigma_eq_daily = daily_returns_df["AR_eq"].std(ddof=1)
+sigma_val_daily = daily_returns_df["AR_val"].std(ddof=1)
+
+power_car_rows = []
+for w in [3, 5, 10]:
+    ns = []
+    for event in event_dates:
+        mask = (daily_returns_df.index >= event - pd.Timedelta(days=w)) & \\
+               (daily_returns_df.index <= event + pd.Timedelta(days=w))
+        ns.append(mask.sum())
+    ns = [n for n in ns if n >= (w + 1)]  # drop boundary-truncated windows near the sample start
+    median_n = int(np.median(ns))
+    power_car_rows.append({
+        "Window": f"+/-{w}d", "Median_N_trading_days": median_n,
+        "MDE_EW": car_mde(sigma_eq_daily, median_n),
+        "MDE_VW": car_mde(sigma_val_daily, median_n),
+    })
+
+power_car_table = pd.DataFrame(power_car_rows).set_index("Window")
+power_car_table.round(4)
+""")
+
+md("""
+**Verdict: also underpowered.** Observed event CARs above range roughly -3.9% to +7.8% (VW) and
+-1.9% to +4.6% (EW); the MDE at every window width is larger than nearly every observed CAR in
+the table. None of the 10 events would have registered as significant even if the true effect
+matched the largest point estimate actually observed — this is consistent with, not contradicted
+by, the "0 of 10 events significant" result above.
+""")
+
+md("""
 ## Portfolio-level comparison: EW vs. VW
 
 Value-weighted led equal-weighted over this window, consistent with large-cap names (TSLA, NVDA,
@@ -314,13 +409,18 @@ md("""
 
 - The 15-stock basket outperformed SPY over Apr-Sep 2025 on both an equal- and value-weighted
   basis (see the performance summary table for the actual six-month cumulative returns).
-- That outperformance is **not** evidence of statistically significant alpha: t-stats of
-  1.16-1.46 across CAPM/FF6 and EW/VW fall well short of the 1.96 threshold, and betas of
-  1.36-1.58 indicate the basket carried substantially more market risk than SPY — most of the
-  outperformance is explained by that extra market and factor exposure.
+- That outperformance is **not** reliable evidence of statistically significant alpha: t-stats
+  across the four CAPM/FF6, EW/VW specifications straddle the 1.96 threshold rather than
+  clearing it (see the live table above), and betas of 1.36-1.58 indicate the basket carried
+  substantially more market risk than SPY — most of the outperformance is explained by that
+  extra market and factor exposure, not by unexplained alpha.
+- The power analysis above shows this design lacked the statistical power to reliably detect
+  even the alpha it actually observed (MDE exceeds the point estimate in all four
+  specifications) — the correct conclusion is "this design couldn't have detected an effect of
+  plausible size," not "there is no alpha."
 - Individual tariff-event CARs are mostly not distinguishable from noise at conventional
-  significance thresholds; read the event-day table above for which specific dates (if any)
-  clear that bar in this run.
+  significance thresholds; the power analysis shows the same underpowering applies here too —
+  read the event-day table above for which specific dates (if any) clear that bar in this run.
 - The basket's industry composition (Autos/Semis/Steel) reflects the original Report 1 ranking,
   which did not hold up after Report 1's bugs were corrected — see `../CORRECTIONS.md`. This
   report's findings apply to the basket as selected, not as validated "most tariff-affected

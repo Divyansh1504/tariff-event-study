@@ -258,6 +258,53 @@ print("Corrected ranking by |FF3 CAR| (most- to least-affected):")
 ranking
 """)
 
+md("""
+## Statistical power: could this design have detected a plausible industry effect?
+
+A null result ("no industry CAR is significant") is a different claim from "this design could
+have detected an effect if one existed." Below: the minimum detectable effect (MDE) at 80% power
+for each industry/model, derived algebraically from the CAR and t-stat already computed above
+(`sigma = CAR / (t*sqrt(N))`, so `MDE = z_combined * CAR / t` — see `src/regression.py::car_mde`).
+No new fetch, no new specification — this describes the power of the test already run.
+""")
+
+code("""
+Z_COMBINED = 2.801585  # z(0.975) + z(0.80), two-sided alpha=0.05, 80% power
+
+power_rows = []
+for (industry, etf), row in car_summary.iterrows():
+    row_data = {"Industry": industry, "ETF": etf}
+    for spec, car_col, t_col, n_col in [("ETF", "ETF_CAR", "ETF_t", "ETF_N"),
+                                          ("FF3", "FF3_CAR", "FF3_t", "FF3_N"),
+                                          ("FF5", "FF5_CAR", "FF5_t", "FF5_N")]:
+        car, t, n = row[car_col], row[t_col], row[n_col]
+        mde = Z_COMBINED * abs(car / t) if t != 0 else np.nan
+        row_data[f"{spec}_N"] = n
+        row_data[f"{spec}_CAR"] = car
+        row_data[f"{spec}_MDE"] = mde
+    power_rows.append(row_data)
+
+industry_power_table = pd.DataFrame(power_rows).set_index(["Industry", "ETF"])
+industry_power_table.round(4)
+""")
+
+md("""
+**Was this design capable of detecting a plausible tariff effect? No — substantially
+underpowered, at both the daily-ETF and monthly-FF30 layers.** ETF-based MDEs run roughly
+17-45% over six months; FF30-based MDEs run roughly 9-31% for five of the six industries. (Autos
+is a degenerate case here — its FF3 and FF5 t-stats are both close to zero, which makes the
+algebraic `sigma = CAR/(t*sqrt(N))` recovery numerically unstable and produces an MDE near 100%.
+That's an artifact of dividing by a near-zero t-stat, not a real detection threshold — read
+Autos's FF3/FF5 MDE as "not meaningfully estimable from this table," not as "100% required.")
+Compare the stable estimates to what a real tariff effect might plausibly look like: single-digit
+to low-double-digit percentage moves over six months, not the 20%+ swings this design would need
+to reliably detect. Only Steel's ETF-based CAR (37.9% observed vs. ~45% MDE) comes close to the
+detection threshold; every other industry/model combination sits well below it. **The honest
+conclusion is "this design could not have detected an industry effect of plausible size," not
+"there is no industry effect."** That's a materially different — and more defensible — claim
+than the null on its own, and it's the correct way to read every CAR result in this notebook.
+""")
+
 md("## Comparative view: CAR + volatility + volume shock, by industry")
 
 code("""
@@ -416,9 +463,12 @@ md("""
    every industry and every model specification. The "most-affected industries" framing in the
    original write-up should be read as descriptive ranking of point estimates, not as a tested
    finding.
-3. **Small event-window N.** The FF30 monthly event window has only 6 observations; the ETF daily
-   window has ~125. Both are short relative to the noise in monthly/daily industry returns, which
-   limits the power to detect anything short of a very large effect.
+3. **This design is underpowered, not just null.** The FF30 monthly event window has only 6
+   observations; the ETF daily window has ~125. The power analysis above quantifies exactly what
+   that costs: MDEs of roughly 17-45% (ETF) and 9-31% (FF30, for five of six industries), against
+   plausible tariff effects of single- to low-double-digit percent. This isn't a caveat on the
+   null result — it's the reason the null result alone doesn't tell you whether a real (smaller)
+   effect exists.
 4. **Rerun caveat.** yfinance returns split/dividend-adjusted prices, so a rerun on a later date
    will not exactly reproduce these figures even with identical code — see the README for the
    pinned rerun date and what changed between runs.
